@@ -1,0 +1,36 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-getway}
+      POSTGRES_USER: ${POSTGRES_USER:-getway}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes: [getway_pg:/var/lib/postgresql/data]
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    depends_on: [postgres]
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-getway}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-getway}?schema=public
+      PORT: 3333
+      JWT_SECRET: ${JWT_SECRET}
+      CORS_ORIGIN: ${CORS_ORIGIN}
+      PAYMENT_PROVIDER: ${PAYMENT_PROVIDER:-sandbox}
+      ASAAS_ENV: ${ASAAS_ENV:-sandbox}
+      ASAAS_API_KEY: ${ASAAS_API_KEY:-}
+      ASAAS_WEBHOOK_TOKEN: ${ASAAS_WEBHOOK_TOKEN}
+    ports: ["3333:3333"]
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        VITE_API_URL: ${PUBLIC_API_URL}
+    restart: unless-stopped
+    depends_on: [api]
+    ports: ["8080:80"]
+volumes:
+  getway_pg:
