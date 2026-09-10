@@ -1,0 +1,5 @@
+import { Router } from 'express'; import { z } from 'zod'; import { prisma } from '../lib/prisma.js'; import { paymentProvider } from '../providers/index.js';
+const router=Router();
+router.get('/',async(req,res)=>res.json(await prisma.paymentLink.findMany({where:{tenantId:req.auth!.tenantId},orderBy:{createdAt:'desc'}})));
+router.post('/',async(req,res)=>{try{const d=z.object({name:z.string().min(2),description:z.string().optional(),value:z.coerce.number().positive().optional(),billingType:z.enum(['PIX','BOLETO','CREDIT_CARD','UNDEFINED']),chargeType:z.enum(['DETACHED','RECURRENT','INSTALLMENT']).default('DETACHED'),subscriptionCycle:z.string().optional(),maxInstallmentCount:z.coerce.number().int().min(1).max(21).optional()}).parse(req.body);const remote=await paymentProvider.createPaymentLink(d);const link=await prisma.paymentLink.create({data:{tenantId:req.auth!.tenantId,providerId:remote.id,name:d.name,description:d.description,value:d.value,billingType:d.billingType,chargeType:d.chargeType,url:remote.url,active:remote.active??true}});res.status(201).json(link)}catch(e:any){res.status(400).json({error:e.message})}});
+export default router;

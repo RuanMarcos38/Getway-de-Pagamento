@@ -1,0 +1,13 @@
+import crypto from 'node:crypto'; import { Router } from 'express'; import { z } from 'zod'; import { prisma } from '../lib/prisma.js'; import { paymentProvider } from '../providers/index.js'; import { requireRole } from '../middleware/auth.js';
+const router=Router();
+router.get('/',async(req,res)=>res.json(await prisma.payment.findMany({where:{tenantId:req.auth!.tenantId},include:{customer:true},orderBy:{createdAt:'desc'},take:100})));
+router.post('/',async(req,res)=>{try{
+ const d=z.object({customerId:z.string(),billingType:z.enum(['PIX','BOLETO','CREDIT_CARD','UNDEFINED']),amount:z.coerce.number().positive(),dueDate:z.string(),description:z.string().max(500).optional()}).parse(req.body);
+ const customer=await prisma.customer.findFirst({where:{id:d.customerId,tenantId:req.auth!.tenantId}}); if(!customer) return res.status(404).json({error:'Cliente não encontrado'}); if(!customer.providerId) return res.status(400).json({error:'Cliente sem vínculo com provedor'});
+ const externalReference=crypto.randomUUID(); const remote=await paymentProvider.createPayment({customerId:customer.providerId,billingType:d.billingType,value:d.amount,dueDate:d.dueDate,description:d.description,externalReference});
+ let pix:any={}; if(d.billingType==='PIX'){pix=await paymentProvider.getPixQrCode(remote.id)}
+ const p=await prisma.payment.create({data:{tenantId:req.auth!.tenantId,customerId:customer.id,providerId:remote.id,externalReference,description:d.description,billingType:d.billingType,amount:d.amount,netAmount:d.amount,dueDate:new Date(d.dueDate),invoiceUrl:remote.invoiceUrl,bankSlipUrl:remote.bankSlipUrl,pixPayload:pix.payload,pixEncodedImage:pix.encodedImage}}); res.status(201).json(p)
+}catch(e:any){res.status(400).json({error:e.message})}});
+router.get('/:id/pix',async(req,res)=>{const paymentId=String(req.params.id);const p=await prisma.payment.findFirst({where:{id:paymentId,tenantId:req.auth!.tenantId}});if(!p?.providerId)return res.status(404).json({error:'Cobrança não encontrada'});const pix=await paymentProvider.getPixQrCode(p.providerId);await prisma.payment.update({where:{id:p.id},data:{pixPayload:pix.payload,pixEncodedImage:pix.encodedImage}});res.json(pix)});
+router.post('/:id/refund',requireRole('OWNER','ADMIN'),async(req,res)=>{try{const paymentId=String(req.params.id);const p=await prisma.payment.findFirst({where:{id:paymentId,tenantId:req.auth!.tenantId}});if(!p?.providerId)return res.status(404).json({error:'Cobrança não encontrada'});const value=req.body?.value?Number(req.body.value):undefined;await paymentProvider.refundPayment(p.providerId,value);await prisma.payment.update({where:{id:p.id},data:{status:'REFUNDED'}});res.json({ok:true})}catch(e:any){res.status(400).json({error:e.message})}});
+export default router;
